@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Classic Snake Game</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      body {
+        font-family: "Press Start 2P", cursive;
+        background-color: #1a1a1a;
+        color: #f0f0f0;
+        touch-action: none; /* Prevents scrolling on touch devices */
+      }
+      .game-container {
+        border: 4px solid #444;
+        box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+      }
+      canvas {
+        background-color: #0d0d0d;
+        display: block;
+      }
+      .game-over-modal {
+        background-color: rgba(0, 0, 0, 0.8);
+      }
+      .restart-button {
+        background-color: #22c55e; /* green-500 */
+        border-bottom: 4px solid #15803d; /* green-700 */
+        transition: all 0.1s ease-in-out;
+      }
+      .restart-button:active {
+        transform: translateY(2px);
+        border-bottom-width: 2px;
+      }
+      .difficulty-button {
+        padding: 8px 16px;
+        border: 2px solid #444;
+        background-color: transparent;
+        color: #f0f0f0;
+        border-radius: 8px;
+        transition: all 0.2s;
+        font-size: 14px;
+      }
+      .difficulty-button:hover {
+        background-color: #333;
+      }
+      .difficulty-button.active {
+        background-color: #22c55e;
+        border-color: #16a34a;
+        color: white;
+      }
+    </style>
+  </head>
+  <body class="flex flex-col items-center justify-center min-h-screen p-4">
+    <div class="w-full max-w-md text-center">
+      <h1 class="text-3xl md:text-4xl mb-2 text-green-400">SNAKE</h1>
+      <div
+        class="flex justify-between items-center text-lg mb-4 p-2 bg-gray-800 rounded-lg"
+      >
+        <span>SCORE: <span id="score">0</span></span>
+        <span>HIGH SCORE: <span id="highScore">0</span></span>
+      </div>
+    </div>
+
+    <!-- Difficulty Controls -->
+    <div id="difficultyControls" class="flex justify-center space-x-2 mb-2">
+      <button data-difficulty="easy" class="difficulty-button">Easy</button>
+      <button data-difficulty="medium" class="difficulty-button active">
+        Medium
+      </button>
+      <button data-difficulty="hard" class="difficulty-button">Hard</button>
+    </div>
+
+    <!-- Power-up Status -->
+    <div
+      id="powerUpStatus"
+      class="text-center text-blue-400 h-6 mb-2 text-sm"
+    ></div>
+
+    <div id="gameContainer" class="game-container rounded-lg overflow-hidden">
+      <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div id="instructions" class="mt-4 text-center text-gray-400 text-sm">
+      <p>Use Arrow Keys or Swipe to move.</p>
+    </div>
+
+    <!-- Game Over Modal -->
+    <div
+      id="gameOverModal"
+      class="fixed inset-0 flex items-center justify-center game-over-modal hidden"
+    >
+      <div
+        class="text-center bg-gray-900 p-8 rounded-lg shadow-2xl border-2 border-red-500"
+      >
+        <h2 class="text-4xl text-red-500 mb-4">GAME OVER</h2>
+        <p class="text-xl mb-6">Your Score: <span id="finalScore">0</span></p>
+        <button
+          id="restartButton"
+          class="restart-button text-white font-bold py-3 px-6 rounded-lg text-lg"
+        >
+          RESTART
+        </button>
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+
+      // UI Elements
+      const scoreEl = document.getElementById("score");
+      const highScoreEl = document.getElementById("highScore");
+      const finalScoreEl = document.getElementById("finalScore");
+      const gameOverModal = document.getElementById("gameOverModal");
+      const restartButton = document.getElementById("restartButton");
+      const gameContainer = document.getElementById("gameContainer");
+      const difficultyControls = document.getElementById("difficultyControls");
+      const powerUpStatusEl = document.getElementById("powerUpStatus");
+
+      // --- Game Configuration ---
+      const gridSize = 20;
+      let tileCountX;
+      let tileCountY;
+      const difficultySettings = {
+        easy: 150,
+        medium: 120,
+        hard: 80,
+      };
+
+      // --- Game State ---
+      let snake = [];
+      let food = {};
+      let powerUp = null; // Can be null or an object {x, y, type}
+      let dx = 1; // direction x
+      let dy = 0; // direction y
+      let score = 0;
+      let highScore = localStorage.getItem("snakeHighScore") || 0;
+      let changingDirection = false;
+      let gameLoopTimeout;
+      let currentDifficulty = "medium";
+      let gameSpeed = difficultySettings[currentDifficulty];
+
+      // Power-up State
+      let powerUpActive = false;
+      let powerUpTimer = null;
+      let powerUpSpawnTimeout = null;
+      let originalGameSpeed;
+
+      // --- Touch Controls ---
+      let touchStartX = 0;
+      let touchStartY = 0;
+      let touchEndX = 0;
+      let touchEndY = 0;
+
+      /**
+       * Initializes or restarts the game state.
+       */
+      function initializeGame() {
+        clearTimeout(gameLoopTimeout);
+        clearTimeout(powerUpSpawnTimeout);
+        clearTimeout(powerUpTimer);
+
+        // Set canvas size
+        const containerWidth = gameContainer.clientWidth;
+        canvas.width = Math.floor(containerWidth / gridSize) * gridSize;
+        canvas.height = canvas.width;
+        tileCountX = canvas.width / gridSize;
+        tileCountY = canvas.height / gridSize;
+
+        // Reset snake
+        snake = [
+          { x: Math.floor(tileCountX / 2), y: Math.floor(tileCountY / 2) },
+          { x: Math.floor(tileCountX / 2) - 1, y: Math.floor(tileCountY / 2) },
+          { x: Math.floor(tileCountX / 2) - 2, y: Math.floor(tileCountY / 2) },
+        ];
+
+        // Reset game state
+        dx = 1;
+        dy = 0;
+        score = 0;
+        scoreEl.textContent = 0;
+        highScoreEl.textContent = highScore;
+        gameSpeed = difficultySettings[currentDifficulty];
+        powerUp = null;
+        powerUpActive = false;
+        powerUpStatusEl.textContent = "";
+
+        createFood();
+        gameOverModal.classList.add("hidden");
+
+        // Start the game
+        schedulePowerUp();
+        main();
+      }
+
+      /**
+       * The main function that runs the game loop.
+       */
+      function main() {
+        gameLoopTimeout = setTimeout(() => {
+          if (didGameEnd()) {
+            showGameOver();
+            return;
+          }
+          changingDirection = false;
+          clearCanvas();
+          drawFood();
+          drawPowerUp();
+          advanceSnake();
+          drawSnake();
+          main();
+        }, gameSpeed);
+      }
+
+      /**
+       * Clears the entire canvas for the next frame.
+       */
+      function clearCanvas() {
+        ctx.fillStyle = "#0d0d0d";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      /**
+       * Draws the food on the canvas.
+       */
+      function drawFood() {
+        ctx.fillStyle = "#ef4444"; // red-500
+        ctx.strokeStyle = "#991b1b"; // red-800
+        ctx.lineWidth = 2;
+        ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize, gridSize);
+        ctx.strokeRect(
+          food.x * gridSize,
+          food.y * gridSize,
+          gridSize,
+          gridSize
+        );
+      }
+
+      /**
+       * Draws the active power-up on the canvas, if it exists.
+       */
+      function drawPowerUp() {
+        if (!powerUp) return;
+        ctx.fillStyle = "#3b82f6"; // blue-500
+        ctx.strokeStyle = "#1d4ed8"; // blue-700
+        ctx.lineWidth = 2;
+        ctx.fillRect(
+          powerUp.x * gridSize,
+          powerUp.y * gridSize,
+          gridSize,
+          gridSize
+        );
+        ctx.strokeRect(
+          powerUp.x * gridSize,
+          powerUp.y * gridSize,
+          gridSize,
+          gridSize
+        );
+      }
+
+      /**
+       * Draws the snake on the canvas, with a different color for the head.
+       */
+      function drawSnake() {
+        // Draw the head with a distinct color
+        ctx.fillStyle = "#a3e635"; // lime-400
+        ctx.strokeStyle = "#65a30d"; // lime-600
+        ctx.lineWidth = 2;
+        ctx.fillRect(
+          snake[0].x * gridSize,
+          snake[0].y * gridSize,
+          gridSize,
+          gridSize
+        );
+        ctx.strokeRect(
+          snake[0].x * gridSize,
+          snake[0].y * gridSize,
+          gridSize,
+          gridSize
+        );
+
+        // Draw the body
+        for (let i = 1; i < snake.length; i++) {
+          drawSnakePart(snake[i]);
+        }
+      }
+
+      /**
+       * Draws a single part of the snake's body.
+       * @param {object} snakePart - The coordinates of the snake part.
+       */
+      function drawSnakePart(snakePart) {
+        ctx.fillStyle = "#22c55e"; // green-500
+        ctx.strokeStyle = "#15803d"; // green-700
+        ctx.lineWidth = 2;
+        ctx.fillRect(
+          snakePart.x * gridSize,
+          snakePart.y * gridSize,
+          gridSize,
+          gridSize
+        );
+        ctx.strokeRect(
+          snakePart.x * gridSize,
+          snakePart.y * gridSize,
+          gridSize,
+          gridSize
+        );
+      }
+
+      /**
+       * Moves the snake forward, checks for food/power-ups, and handles screen wrapping.
+       */
+      function advanceSnake() {
+        const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+
+        // Screen wrapping logic
+        if (head.x < 0) head.x = tileCountX - 1;
+        else if (head.x >= tileCountX) head.x = 0;
+        if (head.y < 0) head.y = tileCountY - 1;
+        else if (head.y >= tileCountY) head.y = 0;
+
+        snake.unshift(head);
+
+        // Check for power-up consumption
+        if (powerUp && head.x === powerUp.x && head.y === powerUp.y) {
+          activateSlowMo();
+          powerUp = null;
+        }
+
+        // Check for food consumption
+        const didEatFood = snake[0].x === food.x && snake[0].y === food.y;
+        if (didEatFood) {
+          score += 10;
+          scoreEl.textContent = score;
+          createFood();
+        } else {
+          snake.pop();
+        }
+      }
+
+      /**
+       * Checks for game-ending conditions (self collision only).
+       */
+      function didGameEnd() {
+        for (let i = 4; i < snake.length; i++) {
+          if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      /**
+       * Displays the game over modal and updates high score.
+       */
+      function showGameOver() {
+        if (score > highScore) {
+          highScore = score;
+          localStorage.setItem("snakeHighScore", highScore);
+          highScoreEl.textContent = highScore;
+        }
+        finalScoreEl.textContent = score;
+        gameOverModal.classList.remove("hidden");
+      }
+
+      /**
+       * Creates a new food item at a random location.
+       */
+      function createFood() {
+        let foodX, foodY;
+        do {
+          foodX = Math.floor(Math.random() * tileCountX);
+          foodY = Math.floor(Math.random() * tileCountY);
+        } while (snake.some((part) => part.x === foodX && part.y === foodY));
+        food = { x: foodX, y: foodY };
+      }
+
+      /**
+       * Creates a new power-up at a random location.
+       */
+      function createPowerUp() {
+        if (powerUpActive || powerUp) return; // Don't spawn if one exists or is active
+        let powerUpX, powerUpY;
+        do {
+          powerUpX = Math.floor(Math.random() * tileCountX);
+          powerUpY = Math.floor(Math.random() * tileCountY);
+        } while (
+          snake.some((part) => part.x === powerUpX && part.y === powerUpY) ||
+          (food.x === powerUpX && food.y === powerUpY)
+        );
+        powerUp = { x: powerUpX, y: powerUpY, type: "slowMo" };
+      }
+
+      /**
+       * Schedules the next power-up to appear after a random interval.
+       */
+      function schedulePowerUp() {
+        const nextSpawnTime = Math.random() * 10000 + 5000; // 5-15 seconds
+        powerUpSpawnTimeout = setTimeout(() => {
+          createPowerUp();
+        }, nextSpawnTime);
+      }
+
+      /**
+       * Activates the slow-motion power-up effect.
+       */
+      function activateSlowMo() {
+        if (powerUpActive) return;
+        powerUpActive = true;
+        originalGameSpeed = gameSpeed;
+        gameSpeed = 200; // Slower speed
+        powerUpStatusEl.textContent = "SLOW-MO ACTIVE!";
+
+        clearTimeout(gameLoopTimeout);
+        main();
+
+        powerUpTimer = setTimeout(deactivateSlowMo, 5000); // Effect lasts 5 seconds
+      }
+
+      /**
+       * Deactivates the slow-motion power-up effect.
+       */
+      function deactivateSlowMo() {
+        powerUpActive = false;
+        gameSpeed = originalGameSpeed;
+        powerUpStatusEl.textContent = "";
+
+        clearTimeout(gameLoopTimeout);
+        main();
+
+        schedulePowerUp(); // Schedule the next one
+      }
+
+      /**
+       * Handles keyboard input to change the snake's direction.
+       */
+      function changeDirection(event) {
+        if (changingDirection) return;
+        changingDirection = true;
+
+        const keyPressed = event.key;
+        const goingUp = dy === -1,
+          goingDown = dy === 1;
+        const goingRight = dx === 1,
+          goingLeft = dx === -1;
+
+        if (keyPressed === "ArrowLeft" && !goingRight) {
+          dx = -1;
+          dy = 0;
+        }
+        if (keyPressed === "ArrowUp" && !goingDown) {
+          dx = 0;
+          dy = -1;
+        }
+        if (keyPressed === "ArrowRight" && !goingLeft) {
+          dx = 1;
+          dy = 0;
+        }
+        if (keyPressed === "ArrowDown" && !goingUp) {
+          dx = 0;
+          dy = 1;
+        }
+      }
+
+      /**
+       * Handles touch input to change direction.
+       */
+      function handleSwipe() {
+        if (changingDirection) return;
+
+        const deltaX = touchEndX - touchStartX;
+        const deltaY = touchEndY - touchStartY;
+
+        if (Math.abs(deltaX) > Math.abs(deltaY)) {
+          if (deltaX > 0 && dx !== -1) {
+            dx = 1;
+            dy = 0;
+          } else if (deltaX < 0 && dx !== 1) {
+            dx = -1;
+            dy = 0;
+          }
+        } else {
+          if (deltaY > 0 && dy !== -1) {
+            dx = 0;
+            dy = 1;
+          } else if (deltaY < 0 && dy !== 1) {
+            dx = 0;
+            dy = -1;
+          }
+        }
+        changingDirection = true;
+      }
+
+      function handleTouchStart(event) {
+        touchStartX = event.changedTouches[0].screenX;
+        touchStartY = event.changedTouches[0].screenY;
+      }
+
+      function handleTouchEnd(event) {
+        touchEndX = event.changedTouches[0].screenX;
+        touchEndY = event.changedTouches[0].screenY;
+        handleSwipe();
+      }
+
+      /**
+       * Handles clicks on the difficulty buttons.
+       */
+      function handleDifficultyChange(event) {
+        const selectedButton = event.target.closest(".difficulty-button");
+        if (!selectedButton) return;
+
+        currentDifficulty = selectedButton.dataset.difficulty;
+
+        // Update active button style
+        document
+          .querySelectorAll(".difficulty-button")
+          .forEach((btn) => btn.classList.remove("active"));
+        selectedButton.classList.add("active");
+
+        // Restart game with new difficulty
+        initializeGame();
+      }
+
+      // --- Event Listeners ---
+      document.addEventListener("keydown", changeDirection);
+      restartButton.addEventListener("click", initializeGame);
+      window.addEventListener("resize", initializeGame);
+      difficultyControls.addEventListener("click", handleDifficultyChange);
+      canvas.addEventListener("touchstart", handleTouchStart, false);
+      canvas.addEventListener("touchend", handleTouchEnd, false);
+
+      // --- Initial Game Start ---
+      initializeGame();
+    </script>
+  </body>
+</html>
